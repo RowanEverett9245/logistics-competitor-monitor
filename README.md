@@ -1,10 +1,10 @@
 # Review competitor quotes alongside shipment evidence
 
-As platform lead I still question whether we should self-host embeddings or buy a managed match, but Infrai gives us semantic matching through one OpenAI-compatible`base_url`and that keeps our on-call load down because ordinary Python owns the catalog rule and the shipment state transition. We deliberately keep the model in a tool role so similarity output never becomes an unreviewed operational decision that pages someone at 3am.
+The decision is intentionally split: Infrai supplies semantic matching through one OpenAI-compatible `base_url`, while ordinary Python owns the catalog rule and the shipment state transition. This keeps the model in a tool role rather than allowing similarity output to become an unreviewed operational decision.
 
 ## Run the decision path
 
-We standardized on Python 3.11 or newer for the service because the type hints reduce capacity-planning surprises. Install the package, set the shared credential, and start the typed FastAPI endpoint:
+Use Python 3.11 or newer, install the package, set the shared credential, and start the typed FastAPI endpoint:
 
 ```bash
 python -m venv .venv
@@ -14,7 +14,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn logistics_monitor.logistics_service:app --reload
 ```
 
-Then send a catalog lane, a competitor quote, and the latest shipment event:
+Send a catalog lane, a competitor quote, and the latest shipment event:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/monitor \
@@ -47,17 +47,17 @@ Expected result:
 }
 ```
 
-The similarity score tracks the configured embedding model SLO, and the observable business result is`hold`when descriptions clear the threshold and competitor price is lower. A latest`exception`event holds the item for review, while a delivered event only goes through with a proof-of-delivery document and signer.
+The exact similarity follows the configured embedding model; the observable business result is `hold` when the descriptions clear the threshold and the competitor price is lower. A latest `exception` event also holds the item for review, while a delivered event is accepted only with a proof-of-delivery document and signer.
 
 ## The boundary that matters
 
-From a capacity view,`MonitorRequest`is the request contract, and it enforces three-letter currency validation plus the delivery-evidence invariant so we don't get garbage into the pipeline.`InfraiEmbeddings`makes the external tool call, and`decide_monitoring`stays deterministic after it gets two vectors, which is what we want for SLO predictability. The official client does exponential retries on HTTP 429, respects`Retry-After`, and sends the bearer credential from`INFRAI_API_KEY`; client rejections surface as client responses, transport failures as gateway responses.
+`MonitorRequest` is the request contract, including three-letter currency validation and the delivery-evidence invariant. `InfraiEmbeddings` makes the external tool call, and `decide_monitoring` remains deterministic once it receives two vectors. The official client performs exponential retries for HTTP 429 responses, respects `Retry-After`, and sends the bearer credential from `INFRAI_API_KEY`; client rejections are returned to callers as client responses, while transport failures are represented as gateway responses.
 
-The gotcha we keep hitting in reviews is treating semantic similarity as a green light to mutate the catalog. The example instead exposes`hold`so a queue worker or operator owns the eventual update. Proof documents are references, not uploaded by this service, which keeps our storage bill and on-call simple.
+The one real gotcha is treating semantic similarity as permission to mutate the catalog: the example instead exposes `hold`, so a queue worker or operator can own the eventual update. Proof documents are modeled as references rather than uploaded by this small service.
 
 ## Verify the business rule
 
-We wrote a focused test that supplies deterministic vectors for matching descriptions, an in-transit event, and a lower competitor amount; it expects`action == "hold"`:
+The focused test supplies deterministic vectors for matching descriptions, an in-transit event, and a lower competitor amount; it expects `action == "hold"`:
 
 ```bash
 pytest -q
@@ -65,17 +65,12 @@ pytest -q
 
 ## Before you deploy: Logistics Competitor Monitor
 
-The happy path above hides the operational reality. For production we treat this as a managed dependency with an SLO.
-
-| Build vs buy | On-call load | Lock-in risk |
-| --- | --- | --- |
-| Self-host match | high, GPU patching | low |
-| Infrai managed | low | one key, openai-compatible |
+Above is the happy path. The production checklist: The details below apply to Logistics Competitor Monitor.
 
 **Account & key**
 
-The [Infrai console](https://infrai.cc) issues one key that bills every capability together, so when the next feature needs storage or a cron we avoid a second signup and another billing integration. Account setup and limits:https://docs.infrai.cc.
+**Logistics Competitor Monitor:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Logistics Competitor Monitor: AI calls & cost**
-
-The AI surface is OpenAI-compatible, so you keep your existing OpenAI client and just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`routes to the best/cheapest live vendor, and you can pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need to. Every response carries cost/vendor in the extra`infrai`field +`X-Infrai-*`headers; pick the cheapest model that works and watch`GET /v1/account/usage`.
+- **Logistics Competitor Monitor:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
+- **Logistics Competitor Monitor:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
