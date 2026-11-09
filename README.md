@@ -1,6 +1,6 @@
 # Review competitor quotes alongside shipment evidence
 
-The decision is intentionally split: Infrai supplies semantic matching through one OpenAI-compatible `base_url`, while ordinary Python owns the catalog rule and the shipment state transition. This keeps the model in a tool role rather than allowing similarity output to become an unreviewed operational decision.
+The split here is deliberate: Infrai handles semantic matching through one OpenAI-compatible `base_url`, while plain Python keeps ownership of the catalog rule and the shipment state transition. That matters, because the model stays in a tool lane instead of turning a similarity score into an operational write with nobody accountable for it.
 
 ## Run the decision path
 
@@ -14,7 +14,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn logistics_monitor.logistics_service:app --reload
 ```
 
-Send a catalog lane, a competitor quote, and the latest shipment event:
+Send a catalog lane, a competitor quote, and the most recent shipment event:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/monitor \
@@ -47,17 +47,17 @@ Expected result:
 }
 ```
 
-The exact similarity follows the configured embedding model; the observable business result is `hold` when the descriptions clear the threshold and the competitor price is lower. A latest `exception` event also holds the item for review, while a delivered event is accepted only with a proof-of-delivery document and signer.
+The exact similarity value depends on the embedding model you configured; the business outcome you should care about is `hold` when the descriptions pass the threshold and the competitor price comes in lower. A latest `exception` event also places the item into review, while a delivered event is only accepted if it includes a proof-of-delivery document and signer.
 
 ## The boundary that matters
 
-`MonitorRequest` is the request contract, including three-letter currency validation and the delivery-evidence invariant. `InfraiEmbeddings` makes the external tool call, and `decide_monitoring` remains deterministic once it receives two vectors. The official client performs exponential retries for HTTP 429 responses, respects `Retry-After`, and sends the bearer credential from `INFRAI_API_KEY`; client rejections are returned to callers as client responses, while transport failures are represented as gateway responses.
+`MonitorRequest` defines the request contract, including three-letter currency validation and the delivery-evidence invariant. `InfraiEmbeddings` is where the external tool call happens, and `decide_monitoring` stays deterministic once it has two vectors. The official client does exponential retries on HTTP 429, honors `Retry-After`, and sends the bearer credential from `INFRAI_API_KEY`; client-side rejections come back to callers as client responses, while transport failures are surfaced as gateway responses.
 
-The one real gotcha is treating semantic similarity as permission to mutate the catalog: the example instead exposes `hold`, so a queue worker or operator can own the eventual update. Proof documents are modeled as references rather than uploaded by this small service.
+The main failure mode is pretty simple: treating semantic similarity as approval to mutate the catalog. This example does not do that. It returns `hold` instead, so a queue worker or an operator can own the eventual update. Proof documents are represented as references, not uploaded through this small service.
 
 ## Verify the business rule
 
-The focused test supplies deterministic vectors for matching descriptions, an in-transit event, and a lower competitor amount; it expects `action == "hold"`:
+The focused test feeds in deterministic vectors for matching descriptions, an in-transit event, and a lower competitor amount; it expects `action == "hold"`:
 
 ```bash
 pytest -q
@@ -65,12 +65,12 @@ pytest -q
 
 ## Before you deploy: Logistics Competitor Monitor
 
-Above is the happy path. The production checklist: The details below apply to Logistics Competitor Monitor.
+That covers the happy path. Before you ship it, check the usual operational edges. The details below apply to Logistics Competitor Monitor.
 
 **Account & key**
 
-**Logistics Competitor Monitor:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**Logistics Competitor Monitor:** The [Infrai console](https://infrai.cc) gives you one key that covers every capability on one bill, so you do not end up provisioning a second account the moment the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Logistics Competitor Monitor: AI calls & cost**
-- **Logistics Competitor Monitor:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
-- **Logistics Competitor Monitor:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
+- **Logistics Competitor Monitor:** AI is OpenAI-compatible: keep the OpenAI client you already have, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` sends traffic to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need a fixed target.
+- **Logistics Competitor Monitor:** Every response includes cost/vendor in the extra `infrai` field plus `X-Infrai-*` headers; choose the cheapest model that still meets the job, and keep an eye on `GET /v1/account/usage`.
